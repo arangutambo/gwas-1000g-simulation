@@ -1,0 +1,17 @@
+data/
+results/qc/
+results/tasks/
+logs/
+*.vcf.gz
+*.pgen
+*.pvar
+*.psam
+*.bed
+*.bim
+*.fam
+.Rhistory
+.quarto/
+report/*_files/
+report/*.aux
+report/*.log
+.DS_Store

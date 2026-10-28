@@ -1,0 +1,174 @@
+---
+title: "Population structure in GWAS and SNP heritability: a simulation study on 1000 Genomes chromosome 22"
+author: "Antoine Haddad"
+date: today
+format:
+  pdf:
+    documentclass: article
+    geometry: margin=2.2cm
+    fontsize: 10.5pt
+    number-sections: true
+    colorlinks: true
+    fig-pos: "H"
+execute:
+  echo: false
+  warning: false
+  message: false
+bibliography: references.bib
+csl: apa.csl
+---
+
+```{r setup}
+suppressPackageStartupMessages({library(data.table); library(ggplot2); library(knitr)})
+theme_set(theme_minimal(base_size = 10))
+root <- normalizePath("..")
+sm <- fread(file.path(root, "results/tables/summary.csv"))
+pcs <- fread(file.path(root, "results/qc/pcs.eigenvec")); setnames(pcs, "#IID", "IID")
+smp <- fread(file.path(root, "results/qc/samples.tsv"))
+pcs <- merge(pcs, smp, by = "IID")
+col_s <- c("naive" = "#97553B", "PC-adjusted" = "#59684B")
+sc_lab <- c(A = "A: genetics + noise", B = "B: genetics + noise + population shift")
+
+q <- function(x) sprintf("%.1f (%.1f-%.1f)", median(x), quantile(x, .25), quantile(x, .75))
+n_rep <- sm[, .N, by = scenario]$N[1]
+med <- sm[, .(lam_n = median(lambda_naive), lam_p = median(lambda_pc),
+              lam_n_min = min(lambda_naive), lam_n_max = max(lambda_naive),
+              lam_p_min = min(lambda_pc), lam_p_max = max(lambda_pc),
+              fl_n = mean(false_loci_naive), fl_p = mean(false_loci_pc),
+              det_p = mean(detected_pc), tru = mean(true_h2),
+              h_n = mean(h2_naive), h_p = mean(h2_pc),
+              b_n = mean(h2_naive - true_h2), b_p = mean(h2_pc - true_h2),
+              sd_n = sd(h2_naive - true_h2), sd_p = sd(h2_pc - true_h2)), by = scenario]
+get <- function(s, col) med[scenario == s][[col]]
+r2pc <- sapply(c("A", "B"), function(s) mean(sapply(seq_len(n_rep), function(i) {
+  ph <- fread(file.path(root, sprintf("results/tasks/%s_%d/pheno.tsv", s, i)))
+  m <- merge(ph, pcs[, c("IID", paste0("PC", 1:10)), with = FALSE], by.x = "#IID", by.y = "IID")
+  summary(lm(y ~ ., data = m[, c("y", paste0("PC", 1:10)), with = FALSE]))$r.squared })))
+n_samp <- nrow(smp)
+n_qc <- 170949; n_common <- 97216; n_pruned <- 5855
+```
+
+# Summary
+
+A genome-wide association study (GWAS) can report false associations when the sample contains ancestry groups that differ in both allele frequency and phenotype [@price2006]. I measured how large this problem is, and how well principal-component (PC) adjustment fixes it, by simulating phenotypes with known causal variants on real genotypes: `r format(n_samp, big.mark=",")` individuals from 26 populations (1000 Genomes Phase 3 [@auton2015]), chromosome 22 only. In each of two scenarios I simulated `r n_rep` replicates with 30 causal variants and a genetic variance share of about 0.4. Scenario A adds noise only; scenario B also adds a mean phenotype shift between continental ancestry groups.
+
+An unadjusted scan is severely inflated in both scenarios (median genomic inflation factor $\lambda$ = `r round(get("A","lam_n"), 1)` in A and `r round(get("B","lam_n"), 1)` in B) and flags on average `r round(get("A","fl_n"))` (A) and `r round(get("B","fl_n"))` (B) distinct megabase windows far from any causal variant. Adjusting for 10 PCs brings $\lambda$ to about `r round(get("A","lam_p"), 2)` and `r round(get("B","lam_p"), 2)`, and false windows to `r round(get("A","fl_p"), 1)` and `r round(get("B","fl_p"), 1)` on average. The adjusted scan recovers about `r round(get("A","det_p"))` of 30 causal variants; some of that loss is the correction removing real signal and some is small effects, and I did not separate the two. SNP heritability estimated by REML on a genomic relationship matrix is close to the truth in scenario A (mean bias `r sprintf("%+.2f", get("A","b_p"))` with PCs) and biased upward in scenario B (`r sprintf("%+.2f", get("B","b_n"))` without PCs, `r sprintf("%+.2f", get("B","b_p"))` with PCs).
+
+This is a simulation on one chromosome with a simplified genetic architecture, so the numbers describe this design, not human GWAS in general.
+
+# Question
+
+When ancestry is a confounder, (1) how inflated is an unadjusted GWAS, (2) how much of that does PC adjustment remove and at what cost in power, and (3) how biased is a GRM-based SNP-heritability estimate? Simulation lets every one of these be scored against a known truth.
+
+# Data and design
+
+**Genotypes.** 1000 Genomes Phase 3, chromosome 22, `r format(n_samp, big.mark=",")` individuals from 5 continental groups (AFR, AMR, EAS, EUR, SAS) [@auton2015]. After QC (biallelic SNPs, MAF $\geq$ 1%, $\leq$ 2% missing) `r format(n_qc, big.mark=",")` variants remain; `r format(n_common, big.mark=",")` with MAF $\geq$ 5% are used for association scans. I applied no Hardy-Weinberg filter because the sample pools 26 populations, so allele-frequency differences between them create apparent departures from equilibrium in true variants (the Wahlund effect).
+
+**Phenotype simulation.** For each replicate, 30 causal variants are drawn from common variants with at least 500 kb between them. Standardised effects are drawn from a standard normal distribution and the genetic value *g* is scaled to variance 0.4. The same causal variants and effects are used in both scenarios for a given replicate.
+
+- *Scenario A:* *y* = *g* + *e*, with *e* ~ N(0, 0.6).
+- *Scenario B:* *y* = *g* + *s* + *e*. *s* is a fixed shift by continental group (AFR −1, AMR 0, EAS +1, EUR +0.5, SAS −0.5, rescaled to variance 0.2) and *e* ~ N(0, 0.4). It stands in for an environmental difference that happens to track ancestry.
+
+The realised heritability (var(*g*) / var(*y*)) is computed per replicate and averages `r round(get("A","tru"), 2)` in A and `r round(get("B","tru"), 2)` in B.
+
+# Methods
+
+**Pipeline.** PLINK 2 [@chang2015] for QC, LD pruning (window 200, step 50, r² < 0.2; `r format(n_pruned, big.mark=",")` variants), PCA (10 PCs), the GRM, and the association scans (`--glm` linear regression). R for simulation, scoring and REML. Each replicate is one Slurm array task (`slurm/02_task_array.slurm`) that calls the same script a local loop calls. See Section 7 for what was and was not run.
+
+**Association scans.** Each replicate is scanned twice: with no covariates, and with 10 PCs as covariates. Genome-wide significance is *p* < 5 × 10^−8^.
+
+**Scoring against the truth.** The genomic inflation factor $\lambda$ is the median association $\chi^2$ divided by its expected value under the null (0.455) [@bulik2015]. A causal variant counts as *detected* if any significant variant lies within 500 kb. A *false window* is a 1 Mb bin that contains a significant variant farther than 500 kb from every causal variant.
+
+**SNP heritability.** REML on the GRM from all QC'd variants, using its eigendecomposition so each likelihood evaluation is cheap; implemented in `R/reml.R` and checked against simulated data (`tests/test_reml.R`). GCTA [@yang2011] has no Apple-silicon build, so I implemented the single-component model directly rather than calling it. The model is fitted without covariates and with the 10 PCs as fixed effects. The truth for comparison is the realised var(*g*)/var(*y*).
+
+# Results
+
+## Population structure in the sample
+
+```{r fig-pca, fig.width=5.6, fig.height=3.8, fig.cap="The first two principal components of the LD-pruned genotypes separate the continental groups."}
+ggplot(pcs, aes(PC1, PC2, colour = super_pop)) + geom_point(size = 0.8, alpha = 0.7) +
+  scale_colour_manual(values = c(AFR = "#97553B", AMR = "#B8923A", EAS = "#59684B", EUR = "#5C4736", SAS = "#7A8C9E")) +
+  labs(colour = "Continental group")
+```
+
+The continental groups separate cleanly on the first two PCs (Figure 1). This is the structure the PCs carry into the adjusted scans. Ten PCs alone explain on average `r round(100*r2pc["A"], 1)`% of phenotypic variance in scenario A, where no ancestry-linked environmental effect was simulated, and `r round(100*r2pc["B"], 1)`% in scenario B. In scenario A that `r round(100*r2pc["A"], 1)`% is almost entirely genetic (ten PCs would explain only about 0.4% of pure noise, 10/2,504): the causal variants have different allele frequencies across groups, so ancestry predicts the genetic value.
+
+## Unadjusted scans are badly inflated, and population shift makes it worse
+
+```{r fig-lambda, fig.width=6.4, fig.height=3.6, fig.cap="Genomic inflation factor per replicate (log scale). Dashed line: no inflation (lambda = 1)."}
+d <- melt(sm[, .(scenario, seed, naive = lambda_naive, `PC-adjusted` = lambda_pc)], id.vars = c("scenario", "seed"),
+          variable.name = "model", value.name = "lambda")
+ggplot(d, aes(model, lambda, colour = model)) + geom_hline(yintercept = 1, linetype = 2) +
+  geom_jitter(width = 0.12, size = 1.8) + scale_y_log10() + scale_colour_manual(values = col_s, guide = "none") +
+  facet_wrap(~ scenario, labeller = labeller(scenario = sc_lab)) + labs(x = NULL, y = "lambda (log scale)")
+```
+
+```{r tab-main}
+tab <- sm[, .(`Realised h²` = sprintf("%.2f", mean(true_h2)),
+              `lambda, naive` = q(lambda_naive), `lambda, PC-adj.` = sprintf("%.2f (%.2f-%.2f)", median(lambda_pc), quantile(lambda_pc, .25), quantile(lambda_pc, .75)),
+              `False windows, naive` = sprintf("%.1f", mean(false_loci_naive)), `False windows, PC-adj.` = sprintf("%.1f", mean(false_loci_pc)),
+              `Causal detected of 30, PC-adj.` = sprintf("%.1f", mean(detected_pc))), by = scenario]
+tab[, scenario := sc_lab[scenario]]
+kable(t(tab[, -1]), col.names = tab$scenario, caption = sprintf("Mean or median (inter-quartile range) over %d replicates per scenario.", n_rep))
+```
+
+Unadjusted $\lambda$ ranges from `r round(min(sm$lambda_naive[sm$scenario=="A"]), 1)` to `r round(max(sm$lambda_naive[sm$scenario=="A"]), 1)` in A and from `r round(min(sm$lambda_naive[sm$scenario=="B"]), 1)` to `r round(max(sm$lambda_naive[sm$scenario=="B"]), 1)` in B (Figure 2, Table 1). Even scenario A, with no environmental confounding, is inflated: because causal allele frequencies differ between ancestry groups, any variant that is ancestry-informative correlates with the phenotype whether or not it is causal. The replicate-to-replicate spread is large because it depends on which 30 variants happen to be causal. With PCs in the model, $\lambda$ falls to `r round(get("A","lam_p_min"), 2)`-`r round(get("A","lam_p_max"), 2)` in A and `r round(get("B","lam_p_min"), 2)`-`r round(get("B","lam_p_max"), 2)` in B. It does not reach 1, but 30 strong causal variants and a polygenic background also inflate $\lambda$ legitimately, and $\lambda$ alone cannot separate that from residual confounding [@bulik2015]; I did not try to.
+
+```{r fig-manhattan, fig.width=7.2, fig.height=5.4, fig.cap="Manhattan plots for replicate 1 of each scenario (thinned: all p < 0.01 plus 5% of the rest). Dashed line: p = 5e-8. Red ticks mark true causal variants."}
+rows <- list()
+for (s in c("A", "B")) for (m in c("naive", "pc")) {
+  x <- readRDS(file.path(root, sprintf("results/tasks/%s_1/scan_%s.rds", s, m)))
+  x[, `:=`(scenario = s, model = ifelse(m == "naive", "naive", "PC-adjusted"))]; rows[[length(rows) + 1]] <- x }
+mh <- rbindlist(rows)
+cz <- rbindlist(lapply(c("A", "B"), function(s) { x <- fread(file.path(root, sprintf("results/tasks/%s_1/causal.tsv", s))); x[, scenario := s]; x }))
+ggplot(mh, aes(POS / 1e6, -log10(P))) + geom_point(size = 0.25, colour = "grey45") +
+  geom_hline(yintercept = -log10(5e-8), linetype = 2, colour = "#97553B") +
+  geom_rug(data = cz, aes(x = POS / 1e6), inherit.aes = FALSE, sides = "b", colour = "#97553B", length = unit(0.04, "npc")) +
+  facet_grid(model ~ scenario, labeller = labeller(scenario = sc_lab), scales = "free_y") +
+  labs(x = "Position on chromosome 22 (Mb)", y = expression(-log[10](italic(p))))
+```
+
+## The price of adjustment
+
+The unadjusted scan "detects" nearly all 30 causal variants (`r round(mean(sm$detected_naive[sm$scenario=="A"]), 1)` on average in A and `r round(mean(sm$detected_naive[sm$scenario=="B"]), 1)` in B), but this number cannot be read as power: with thousands of significant variants spread along the chromosome (Figure 3), a window around any causal variant will almost always contain one by chance. Detection is only meaningful for the adjusted scan, where it is about `r round(get("A","det_p"), 1)` of 30 in A and `r round(get("B","det_p"), 1)` in B. Some of that loss is the correction removing real signal that is correlated with ancestry, and some is simply that these effects are small for a sample of `r format(n_samp, big.mark=",")`. I did not separate the two, so the adjusted detection rate should not be read as the power cost of PC adjustment alone.
+
+## SNP heritability
+
+```{r fig-h2, fig.width=6.8, fig.height=3.6, fig.cap="REML SNP-heritability estimates against the realised truth, one point per replicate. Dashed line: estimate = truth."}
+h <- melt(sm[, .(scenario, true_h2, naive = h2_naive, `PC-adjusted` = h2_pc)], id.vars = c("scenario", "true_h2"),
+          variable.name = "model", value.name = "est")
+ggplot(h, aes(true_h2, est, colour = model)) + geom_abline(linetype = 2) + geom_point(size = 1.8) +
+  scale_colour_manual(values = col_s) + coord_equal(xlim = c(0.2, 0.6), ylim = c(0.2, 0.6)) +
+  facet_wrap(~ scenario, labeller = labeller(scenario = sc_lab)) +
+  labs(x = "Realised heritability", y = "REML estimate", colour = NULL)
+```
+
+In scenario A the estimates scatter around the truth with a small mean bias (`r sprintf("%+.3f", get("A","b_n"))` without PCs, `r sprintf("%+.3f", get("A","b_p"))` with) and a standard deviation of about `r sprintf("%.2f", get("A","sd_n"))`. In scenario B the unadjusted estimate is biased upward by `r sprintf("%+.3f", get("B","b_n"))` on average: the ancestry-linked shift is captured as "genetic" because the GRM encodes ancestry. Adding PCs reduces the bias to `r sprintf("%+.3f", get("B","b_p"))` but does not remove it (Figure 4). With 10 replicates per scenario, these mean biases carry sizeable uncertainty, since the per-replicate standard deviation of the bias is about `r sprintf("%.2f", get("B","sd_n"))`.
+
+# Limitations
+
+- **One chromosome.** All 30 causal variants and the GRM are on chromosome 22. Real traits spread causal variants across the genome and have many more of them, with far smaller effects, so this design has higher per-variant power and a more extreme ancestry-genetics correlation than a genome-wide polygenic trait.
+- **Simplified architecture.** Effects are independent of allele frequency and there is no LD-dependent heritability, which real traits are known to have. Heritability estimates may be sensitive to that choice; I did not vary it.
+- **Few replicates.** `r n_rep` per scenario. Medians and IQRs are shown for $\lambda$ because its distribution is heavily skewed; mean biases in heritability are uncertain to roughly the standard deviations above divided by $\sqrt{`r n_rep`}$.
+- **The "detected" definition** (a significant variant within 500 kb) is generous and undefined for an inflated scan; it should be treated as descriptive.
+- **Adjustment choice.** Ten PCs were used in every case; I did not vary the number or compare with a mixed-model association approach.
+- **Simulated phenotypes only.** A natural next step, listed in the project's `TASKS.md`, is to apply the same scoring to public GWAS summary statistics.
+
+# Reproducibility and portability
+
+The full pipeline is in the repository: `scripts/` (bash), `R/`, `slurm/` and `run_local.sh`.
+
+| Item | Status |
+|---|---|
+| QC, 20 simulation replicates, scoring and this report | **Run end to end** on macOS (Apple silicon), under the system bash 3.2 (`/bin/bash`), with PLINK 2.0 and R 4.5 |
+| `scripts/env.sh` under bash and zsh 5.9 | **Run:** `tests/test_shells.sh` checks both shells resolve identical paths and task mapping |
+| Slurm job scripts (`slurm/*.slurm`, dependency chain in `submit_all.sh`) | **Syntax-checked (`bash -n`) only.** They call the same `scripts/run_task.sh` that the local loop ran, but **have not been submitted to a Slurm scheduler.** The `#SBATCH` resource requests are my estimates, not measured |
+| Linux and Windows (WSL, Git Bash, `run_local.ps1`) | **Not run.** Scripts avoid GNU-only options (`sed -i`, `readlink -f`, `nproc`) to stay portable. A GitHub Actions matrix (`.github/workflows/ci.yml`) is written for Ubuntu, macOS and Windows but **has not yet run** |
+
+The scripts use no bash 4 features, because macOS ships bash 3.2.
+
+# Provenance
+
+Genotypes are public (1000 Genomes) and phenotypes are simulated. The code was written and run with the assistance of Claude Code (Anthropic); I am responsible for checking and understanding the results. My STAT7306 coursework used a Slurm cluster, GCTA and PLINK on assessed data; none of that data, code or text is used here, and the design, data and simulation are different.
+
+# References

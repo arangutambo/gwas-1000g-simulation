@@ -1,0 +1,8 @@
+name: gwas
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - plink2
+  - bcftools
+  - htslib
