@@ -30,7 +30,7 @@ The intermediate data (`results/qc`, `results/tasks`) are not in this repository
 | QC, 20 replicates, scoring, report | Run end to end on macOS (Apple silicon), system bash 3.2, PLINK 2.0, R 4.5 |
 | `scripts/env.sh` under bash and zsh 5.9 | Run (`tests/test_shells.sh`) |
 | Slurm scripts | Syntax-checked only. Never submitted to a scheduler; resource requests are estimates |
-| Linux and Windows (WSL, Git Bash, `run_local.ps1`) | Not run locally. The GitHub Actions workflow runs the shell and REML tests on Ubuntu, macOS and Windows; see the Actions tab for its current status |
+| Linux and Windows | Smoke tests only: the bash/zsh environment test, shell syntax checks and the REML self-test passed on Ubuntu, macOS and Windows in GitHub Actions (28 Oct 2026). The full pipeline was not run there, and `run_local.ps1` has not been run |
 
 ## Provenance
 Written and run with the assistance of Claude Code (Anthropic). I am responsible for checking and understanding the results. No part derives from university coursework or assessed material.

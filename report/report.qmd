@@ -163,7 +163,7 @@ The full pipeline is in the repository: `scripts/` (bash), `R/`, `slurm/` and `r
 | QC, 20 simulation replicates, scoring and this report | **Run end to end** on macOS (Apple silicon), under the system bash 3.2 (`/bin/bash`), with PLINK 2.0 and R 4.5 |
 | `scripts/env.sh` under bash and zsh 5.9 | **Run:** `tests/test_shells.sh` checks both shells resolve identical paths and task mapping |
 | Slurm job scripts (`slurm/*.slurm`, dependency chain in `submit_all.sh`) | **Syntax-checked (`bash -n`) only.** They call the same `scripts/run_task.sh` that the local loop ran, but **have not been submitted to a Slurm scheduler.** The `#SBATCH` resource requests are my estimates, not measured |
-| Linux and Windows (WSL, Git Bash, `run_local.ps1`) | **Not run.** Scripts avoid GNU-only options (`sed -i`, `readlink -f`, `nproc`) to stay portable. A GitHub Actions matrix (`.github/workflows/ci.yml`) is written for Ubuntu, macOS and Windows but **has not yet run** |
+| Linux and Windows | **Smoke tests only.** A GitHub Actions workflow ran the bash/zsh environment test, a syntax check of every shell script and the REML self-test on Ubuntu, macOS and Windows, and all three passed (28 Oct 2026). The full pipeline (PLINK 2 QC, simulation, scans) was **not** run on Linux or Windows, and `run_local.ps1` has not been run. |
 
 The scripts use no bash 4 features, because macOS ships bash 3.2.
 
