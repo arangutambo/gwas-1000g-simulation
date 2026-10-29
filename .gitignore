@@ -1,6 +1,7 @@
 data/
 results/qc/
 results/tasks/
+results/ldsc_work/
 logs/
 *.vcf.gz
 *.pgen
