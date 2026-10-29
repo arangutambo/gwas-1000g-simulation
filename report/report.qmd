@@ -45,14 +45,22 @@ r2pc <- sapply(c("A", "B"), function(s) mean(sapply(seq_len(n_rep), function(i) 
   m <- merge(ph, pcs[, c("IID", paste0("PC", 1:10)), with = FALSE], by.x = "#IID", by.y = "IID")
   summary(lm(y ~ ., data = m[, c("y", paste0("PC", 1:10)), with = FALSE]))$r.squared })))
 n_samp <- nrow(smp)
-n_qc <- 170949; n_common <- 97216; n_pruned <- 5855
+# variant counts come from the PLINK 2 logs and the prune list, not from typed values
+remaining <- function(f) as.integer(sub("^([0-9]+) variants remaining.*", "\\1",
+  grep("variants remaining after main filters", readLines(file.path(root, f)), value = TRUE)[1]))
+n_qc <- remaining("results/qc/chr22_qc.log")
+n_common <- remaining("results/qc/chr22_common.log")
+n_pruned <- length(readLines(file.path(root, "results/qc/ld.prune.in")))
+L <- jsonlite::fromJSON(file.path(root, "results/ldsc_summary.json"), simplifyVector = TRUE)
+lg <- function(sc, md, f) L$summary[[f]][L$summary$scenario == sc & L$summary$model == md]
+lps <- as.data.table(L$per_scan)
 ```
 
 # Summary
 
 A genome-wide association study (GWAS) can report false associations when the sample contains ancestry groups that differ in both allele frequency and phenotype [@price2006]. I measured how large this problem is, and how well principal-component (PC) adjustment fixes it, by simulating phenotypes with known causal variants on real genotypes: `r format(n_samp, big.mark=",")` individuals from 26 populations (1000 Genomes Phase 3 [@auton2015]), chromosome 22 only. In each of two scenarios I simulated `r n_rep` replicates with 30 causal variants and a genetic variance share of about 0.4. Scenario A adds noise only; scenario B also adds a mean phenotype shift between continental ancestry groups.
 
-An unadjusted scan is severely inflated in both scenarios (median genomic inflation factor $\lambda$ = `r round(get("A","lam_n"), 1)` in A and `r round(get("B","lam_n"), 1)` in B) and flags on average `r round(get("A","fl_n"))` (A) and `r round(get("B","fl_n"))` (B) distinct megabase windows far from any causal variant. Adjusting for 10 PCs brings $\lambda$ to about `r round(get("A","lam_p"), 2)` and `r round(get("B","lam_p"), 2)`, and false windows to `r round(get("A","fl_p"), 1)` and `r round(get("B","fl_p"), 1)` on average. The adjusted scan recovers about `r round(get("A","det_p"))` of 30 causal variants; some of that loss is the correction removing real signal and some is small effects, and I did not separate the two. SNP heritability estimated by REML on a genomic relationship matrix is close to the truth in scenario A (mean bias `r sprintf("%+.2f", get("A","b_p"))` with PCs) and biased upward in scenario B (`r sprintf("%+.2f", get("B","b_n"))` without PCs, `r sprintf("%+.2f", get("B","b_p"))` with PCs).
+An unadjusted scan is severely inflated in both scenarios (median genomic inflation factor $\lambda$ = `r round(get("A","lam_n"), 1)` in A and `r round(get("B","lam_n"), 1)` in B) and flags on average `r round(get("A","fl_n"))` (A) and `r round(get("B","fl_n"))` (B) distinct megabase windows far from any causal variant. Adjusting for 10 PCs brings $\lambda$ to about `r round(get("A","lam_p"), 2)` and `r round(get("B","lam_p"), 2)`, and false windows to `r round(get("A","fl_p"), 1)` and `r round(get("B","fl_p"), 1)` on average. The adjusted scan recovers about `r round(get("A","det_p"))` to `r round(get("B","det_p"))` of 30 causal variants; some of that loss is the correction removing real signal and some is small effects, and I did not separate the two. SNP heritability estimated by REML on a genomic relationship matrix is close to the truth in scenario A (mean bias `r sprintf("%+.2f", get("A","b_p"))` with PCs) and biased upward in scenario B (`r sprintf("%+.2f", get("B","b_n"))` without PCs, `r sprintf("%+.2f", get("B","b_p"))` with PCs). Because $\lambda$ cannot say which part of the inflation is confounding, I also ran LD score regression against the known truth: its intercept is `r lg("A","naive","intercept_median")` in scenario A, where no confounder exists despite a median $\lambda$ of `r lg("A","naive","lambda_median")`, and `r lg("B","naive","intercept_median")` in scenario B, where one does -- but it misclassifies individual replicates often enough that I would not rely on it here (@sec-ldsc).
 
 This is a simulation on one chromosome with a simplified genetic architecture, so the numbers describe this design, not human GWAS in general.
 
@@ -112,7 +120,7 @@ tab[, scenario := sc_lab[scenario]]
 kable(t(tab[, -1]), col.names = tab$scenario, caption = sprintf("Mean or median (inter-quartile range) over %d replicates per scenario.", n_rep))
 ```
 
-Unadjusted $\lambda$ ranges from `r round(min(sm$lambda_naive[sm$scenario=="A"]), 1)` to `r round(max(sm$lambda_naive[sm$scenario=="A"]), 1)` in A and from `r round(min(sm$lambda_naive[sm$scenario=="B"]), 1)` to `r round(max(sm$lambda_naive[sm$scenario=="B"]), 1)` in B (Figure 2, Table 1). Even scenario A, with no environmental confounding, is inflated: because causal allele frequencies differ between ancestry groups, any variant that is ancestry-informative correlates with the phenotype whether or not it is causal. The replicate-to-replicate spread is large because it depends on which 30 variants happen to be causal. With PCs in the model, $\lambda$ falls to `r round(get("A","lam_p_min"), 2)`-`r round(get("A","lam_p_max"), 2)` in A and `r round(get("B","lam_p_min"), 2)`-`r round(get("B","lam_p_max"), 2)` in B. It does not reach 1, but 30 strong causal variants and a polygenic background also inflate $\lambda$ legitimately, and $\lambda$ alone cannot separate that from residual confounding [@bulik2015]; I did not try to.
+Unadjusted $\lambda$ ranges from `r round(min(sm$lambda_naive[sm$scenario=="A"]), 1)` to `r round(max(sm$lambda_naive[sm$scenario=="A"]), 1)` in A and from `r round(min(sm$lambda_naive[sm$scenario=="B"]), 1)` to `r round(max(sm$lambda_naive[sm$scenario=="B"]), 1)` in B (Figure 2, Table 1). Even scenario A, with no environmental confounding, is inflated: because causal allele frequencies differ between ancestry groups, any variant that is ancestry-informative correlates with the phenotype whether or not it is causal. The replicate-to-replicate spread is large because it depends on which 30 variants happen to be causal. With PCs in the model, $\lambda$ falls to `r round(get("A","lam_p_min"), 2)`-`r round(get("A","lam_p_max"), 2)` in A and `r round(get("B","lam_p_min"), 2)`-`r round(get("B","lam_p_max"), 2)` in B. It does not reach 1, but 30 strong causal variants and a polygenic background also inflate $\lambda$ legitimately, and $\lambda$ alone cannot separate that from residual confounding [@bulik2015]. @sec-ldsc tests whether LD score regression can.
 
 ```{r fig-manhattan, fig.width=7.2, fig.height=5.4, fig.cap="Manhattan plots for replicate 1 of each scenario (thinned: all p < 0.01 plus 5% of the rest). Dashed line: p = 5e-8. Red ticks mark true causal variants."}
 rows <- list()
@@ -145,6 +153,68 @@ ggplot(h, aes(true_h2, est, colour = model)) + geom_abline(linetype = 2) + geom_
 
 In scenario A the estimates scatter around the truth with a small mean bias (`r sprintf("%+.3f", get("A","b_n"))` without PCs, `r sprintf("%+.3f", get("A","b_p"))` with) and a standard deviation of about `r sprintf("%.2f", get("A","sd_n"))`. In scenario B the unadjusted estimate is biased upward by `r sprintf("%+.3f", get("B","b_n"))` on average: the ancestry-linked shift is captured as "genetic" because the GRM encodes ancestry. Adding PCs reduces the bias to `r sprintf("%+.3f", get("B","b_p"))` but does not remove it (Figure 4). With 10 replicates per scenario, these mean biases carry sizeable uncertainty, since the per-replicate standard deviation of the bias is about `r sprintf("%.2f", get("B","sd_n"))`.
 
+## Can LD score regression tell confounding from polygenicity? {#sec-ldsc}
+
+$\lambda$ cannot separate the two, which is why the section above refuses to read the
+adjusted $\lambda$ as a confounding estimate. LD score regression [@bulik2015] claims it
+can: regressing each variant's $\chi^2$ on its LD score $\ell_j$,
+
+$$\mathrm{E}[\chi^2_j] = 1 + Na + \frac{N h^2_g}{M}\,\ell_j,$$
+
+the slope carries polygenic signal and the intercept $1 + Na$ carries confounding. A
+simulation can test that claim, because here the truth is known: scenario A has no
+environmental confounder at all, scenario B has one.
+
+I computed LD scores for all `r format(L$n_snps_with_ldscore, big.mark=",")` common
+variants from these same `r format(n_samp, big.mark=",")` samples (SNPs within 1 Mb either side, unbiased $r^2$; mean $\ell$ = `r L$ld_score_mean`, median
+`r L$ld_score_median`), then ran the regression with LDSC's own weights, its
+$\chi^2 \leq 80$ outlier rule and a 200-block genomic jackknife for the standard error
+(`scripts/04_ldsc.sh`, `R/ld_scores.R`, `R/ldsc.R`).
+
+```{r tab-ldsc}
+tt <- L$summary
+kable(data.frame(
+  Scenario = ifelse(tt$scenario == "A", "A: no confounder", "B: confounder"),
+  Model = ifelse(tt$model == "naive", "unadjusted", "10 PCs"),
+  `Median lambda` = tt$lambda_median,
+  `Median intercept` = tt$intercept_median,
+  `Intercept IQR` = sprintf("%.2f-%.2f", tt$intercept_q1, tt$intercept_q3),
+  `Mean SE` = tt$mean_jackknife_se,
+  `Calls confounding` = sprintf("%d/%d", tt$n_sig_above_1, L$n_replicates),
+  check.names = FALSE), row.names = FALSE,
+  caption = "LD score regression over 10 replicates per scenario. \"Calls confounding\" counts replicates whose intercept exceeds 1 by more than two jackknife standard errors. In scenario A that is a false positive by construction.")
+```
+
+**The intercept carries information $\lambda$ does not.** Scenario A has no confounder,
+yet its unadjusted $\lambda$ has a median of `r lg("A","naive","lambda_median")`; read on
+its own that would say the scan is badly confounded. The intercept instead reads
+`r lg("A","naive","intercept_median")`. In scenario B, where a confounder was simulated,
+it rises to `r lg("B","naive","intercept_median")`. The intercept is also not simply
+tracking $\lambda$: within scenario A the two are *negatively* rank-correlated
+(`r sprintf("%+.2f", cor(lps[scenario=="A" & model=="naive"]$lambda, lps[scenario=="A" & model=="naive"]$intercept, method="spearman"))`),
+and the three most inflated A replicates have some of the lowest intercepts.
+
+**It is not reliable enough to use per study on this design.** In scenario A the intercept
+ranges `r lg("A","naive","intercept_min")` to `r lg("A","naive","intercept_max")` and
+`r lg("A","naive","n_sig_above_1")` of `r L$n_replicates` replicates call confounding that
+does not exist; in scenario B `r L$n_replicates - lg("B","naive","n_sig_above_1")` replicates
+miss a confounder that does. Values below 1 are outside the model, and several appear.
+
+**After PC adjustment it is biased upward.** Both scenarios give intercepts near
+`r lg("A","pc","intercept_median")` and `r lg("B","pc","intercept_median")`, significantly
+above 1 in `r lg("A","pc","n_sig_above_1")` and `r lg("B","pc","n_sig_above_1")` of
+`r L$n_replicates` replicates -- including scenario A, where after adjustment there is
+nothing left to find. On this design the intercept should not be read as evidence of
+residual confounding.
+
+**The slope is unusable here, as expected.** Implied $h^2$ has a median of
+`r lg("A","naive","h2_ldsc_median")` (A) and `r lg("B","naive","h2_ldsc_median")` (B)
+against a truth near `r round(get("A","tru"), 2)`. Thirty large-effect variants on one
+chromosome are the opposite of the polygenic architecture LDSC assumes, and the LD scores
+come from the same 26-population sample rather than an ancestry-matched reference panel,
+which inflates $r^2$ between ancestry-informative variants. Only the intercept is
+interpretable, and only loosely.
+
 # Limitations
 
 - **One chromosome.** All 30 causal variants and the GRM are on chromosome 22. Real traits spread causal variants across the genome and have many more of them, with far smaller effects, so this design has higher per-variant power and a more extreme ancestry-genetics correlation than a genome-wide polygenic trait.
@@ -152,7 +222,8 @@ In scenario A the estimates scatter around the truth with a small mean bias (`r 
 - **Few replicates.** `r n_rep` per scenario. Medians and IQRs are shown for $\lambda$ because its distribution is heavily skewed; mean biases in heritability are uncertain to roughly the standard deviations above divided by $\sqrt{`r n_rep`}$.
 - **The "detected" definition** (a significant variant within 500 kb) is generous and undefined for an inflated scan; it should be treated as descriptive.
 - **Adjustment choice.** Ten PCs were used in every case; I did not vary the number or compare with a mixed-model association approach.
-- **Simulated phenotypes only.** A natural next step, listed in the project's `TASKS.md`, is to apply the same scoring to public GWAS summary statistics.
+- **LD score regression** is run on chromosome 22 only, with LD scores from the sample being analysed rather than a matched reference panel, and on a 30-variant architecture. Its intercept separates the two scenarios at the median but misclassifies individual replicates in both directions, so @sec-ldsc reports it as a check on the method, not as a tool I would rely on.
+- **Simulated phenotypes only.** A natural next step is to apply the same scoring to public GWAS summary statistics, where the truth is unknown and only calibration can be checked.
 
 # Reproducibility and portability
 
@@ -162,6 +233,7 @@ The full pipeline is in the repository: `scripts/` (bash), `R/`, `slurm/` and `r
 |---|---|
 | QC, 20 simulation replicates, scoring and this report | **Run end to end** on macOS (Apple silicon), under the system bash 3.2 (`/bin/bash`), with PLINK 2.0 and R 4.5 |
 | `scripts/env.sh` under bash and zsh 5.9 | **Run:** `tests/test_shells.sh` checks both shells resolve identical paths and task mapping |
+| LD score regression (`scripts/04_ldsc.sh`) | **Run end to end** on macOS. LD scores for all `r format(L$n_snps_with_ldscore, big.mark=",")` variants take about 45 minutes; the 40 scans it re-runs take seconds. Syntax-checked under bash and zsh |
 | Slurm job scripts (`slurm/*.slurm`, dependency chain in `submit_all.sh`) | **Syntax-checked (`bash -n`) only.** They call the same `scripts/run_task.sh` that the local loop ran, but **have not been submitted to a Slurm scheduler.** The `#SBATCH` resource requests are my estimates, not measured |
 | Linux and Windows | **Smoke tests only.** A GitHub Actions workflow ran the bash/zsh environment test, a syntax check of every shell script and the REML self-test on Ubuntu, macOS and Windows, and all three passed (28 Oct 2026). The full pipeline (PLINK 2 QC, simulation, scans) was **not** run on Linux or Windows, and `run_local.ps1` has not been run. |
 
